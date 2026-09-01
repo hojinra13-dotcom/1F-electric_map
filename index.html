@@ -90,7 +90,7 @@
 
   <div class="search-box">
     <div class="search-wrapper">
-      <input type="text" id="searchInput" placeholder="차단기 번호 또는 설비명 입력 (예: VCB401, ACB101, 급수, 디젤발전기)" oninput="onTypeInput(this.value)" onkeypress="if(event.key==='Enter') search()">
+      <input type="text" id="searchInput" placeholder="차단기 번호 또는 설비명 입력 (예: VCB401, PLB, ACB101, 급수)" oninput="onTypeInput(this.value)" onkeypress="if(event.key==='Enter') search()">
       <div id="suggestBox" class="autocomplete-list"></div>
     </div>
     <button onclick="search()">위치 검색</button>
@@ -173,7 +173,7 @@
       const matches = Object.keys(breakerList).filter(key => key.toUpperCase().includes(query));
       if (matches.length > 0) {
         const uniqueMatches = [...new Set(matches)].slice(0, 15);
-        suggestBox.innerHTML = uniqueMatches.map(key => `<div class="autocomplete-item" onclick="selectItem('${key}')">${key}</div>`).join('');
+        suggestBox.innerHTML = uniqueMatches.map(key => `<div class="autocomplete-item" onclick="selectItem('${key.replace(/'/g, "\\'")}')">${key}</div>`).join('');
         suggestBox.style.display = 'block';
       } else { suggestBox.style.display = 'none'; }
     }
@@ -188,10 +188,23 @@
       const input = document.getElementById('searchInput').value.trim().toUpperCase();
       document.getElementById('suggestBox').style.display = 'none';
       if (!input) return;
-      if (breakerList[input]) { locateBreaker(input); return; }
-      const partialMatch = Object.keys(breakerList).find(key => key.toUpperCase().includes(input));
-      if (partialMatch) { locateBreaker(partialMatch); } 
-      else { alert('등록되지 않은 차단기 또는 설비명입니다.'); document.getElementById('targetBox').style.display = 'none'; }
+
+      // 1. 완전 일치 단어 우선 검색 (예: PLB)
+      const exactMatch = Object.keys(breakerList).find(key => key.toUpperCase() === input);
+      if (exactMatch) {
+        locateBreaker(exactMatch);
+        return;
+      }
+
+      // 2. 부분 일치 검색 (검색어가 포함된 단어 중 가장 짧은/정확도가 높음 키 선택)
+      const partialMatches = Object.keys(breakerList).filter(key => key.toUpperCase().includes(input));
+      if (partialMatches.length > 0) {
+        partialMatches.sort((a, b) => a.length - b.length);
+        locateBreaker(partialMatches[0]);
+      } else {
+        alert('등록되지 않은 차단기 또는 설비명입니다.');
+        document.getElementById('targetBox').style.display = 'none';
+      }
     }
 
     function locateBreaker(name) {
