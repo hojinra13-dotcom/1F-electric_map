@@ -196,7 +196,7 @@
         return;
       }
 
-      // 2. 부분 일치 검색 (검색어가 포함된 단어 중 가장 짧은/정확도가 높음 키 선택)
+      // 2. 부분 일치 검색 (검색어가 포함된 단어 중 가장 짧은/정확도가 높은 키 선택)
       const partialMatches = Object.keys(breakerList).filter(key => key.toUpperCase().includes(input));
       if (partialMatches.length > 0) {
         partialMatches.sort((a, b) => a.length - b.length);
