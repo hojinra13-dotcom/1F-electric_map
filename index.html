@@ -90,7 +90,7 @@
 
   <div class="search-box">
     <div class="search-wrapper">
-      <input type="text" id="searchInput" placeholder="차단기 번호 또는 설비명 입력 (예: VCB401, PLB, ACB101, 급수)" oninput="onTypeInput(this.value)" onkeypress="if(event.key==='Enter') search()">
+      <input type="text" id="searchInput" placeholder="차단기 번호 또는 설비명 입력 (예: VCB401, PLB, HOB, ACB101)" oninput="onTypeInput(this.value)" onkeypress="if(event.key==='Enter') search()">
       <div id="suggestBox" class="autocomplete-list"></div>
     </div>
     <button onclick="search()">위치 검색</button>
@@ -108,6 +108,12 @@
 
   <script>
     const breakerList = {
+      // PLB / HOB 독립 키 명시적 추가 (우선순위 부여)
+      "PLB": { left: 42.3, top: 65.4 },
+      "HOB": { left: 42.3, top: 65.4 },
+      "HOB/PLB": { left: 42.3, top: 65.4 },
+      "PLB/HOB": { left: 42.3, top: 65.4 },
+
       // 1. 기존 데이터 (콘덴서반 & VCB 400/500번대)
       "콘덴서6": { left: 4.6, top: 23.9 }, "콘덴서5": { left: 8.5, top: 24.0 }, "콘덴서4": { left: 12.3, top: 24.0 },
       "콘덴서3": { left: 16.0, top: 24.2 }, "콘덴서2": { left: 20.4, top: 24.2 }, "콘덴서1": { left: 24.3, top: 23.9 },
@@ -149,7 +155,7 @@
       "ACB303": { left: 26.4, top: 65.2 }, "전기히터 (DH)": { left: 26.4, top: 65.2 }, "전기히터": { left: 26.4, top: 65.2 },"Electric Heater": { left: 26.4, top: 65.2 },
       "ACB305": { left: 30.4, top: 65.5 }, "ACB306": { left: 34.4, top: 65.8 }, "ACB306 TIE-BRK": { left: 34.4, top: 65.8 },
       "ACB405": { left: 38.0, top: 65.4 }, "LTG TR. #2": { left: 38.0, top: 65.4 }, "LTG TR 2": { left: 38.0, top: 65.4 },
-      "ACB403": { left: 42.3, top: 65.4 }, "PLB": { left: 42.3, top: 65.4 }, "ACB401 PT PNL": { left: 45.9, top: 65.5 },
+      "ACB403": { left: 42.3, top: 65.4 }, "ACB401 PT PNL": { left: 45.9, top: 65.5 },
       "ESS. LTG TR. & DIST. PNL": { left: 64.5, top: 60.2 }, "ESS LTG TR": { left: 64.5, top: 60.2 }, "ISS-E1": { left: 71.6, top: 58.3 },
 
       // 4. L/C A3 & ACB 500/600 & 비상디젤발전기
@@ -166,11 +172,16 @@
       "비상 디젤 발전기": { left: 91.4, top: 73.6 }, "비상디젤발전기": { left: 91.4, top: 73.6 }, "디젤발전기": { left: 91.4, top: 73.6 }
     };
 
+    function normalizeText(text) {
+      return text.replace(/[\s\/\-\_\.\,\(\)]/g, '').toUpperCase();
+    }
+
     function onTypeInput(text) {
       const suggestBox = document.getElementById('suggestBox');
-      const query = text.trim().toUpperCase();
+      const query = normalizeText(text);
       if (!query) { suggestBox.style.display = 'none'; return; }
-      const matches = Object.keys(breakerList).filter(key => key.toUpperCase().includes(query));
+      
+      const matches = Object.keys(breakerList).filter(key => normalizeText(key).includes(query));
       if (matches.length > 0) {
         const uniqueMatches = [...new Set(matches)].slice(0, 15);
         suggestBox.innerHTML = uniqueMatches.map(key => `<div class="autocomplete-item" onclick="selectItem('${key.replace(/'/g, "\\'")}')">${key}</div>`).join('');
@@ -185,19 +196,20 @@
     }
 
     function search() {
-      const input = document.getElementById('searchInput').value.trim().toUpperCase();
+      const rawInput = document.getElementById('searchInput').value.trim();
+      const input = normalizeText(rawInput);
       document.getElementById('suggestBox').style.display = 'none';
       if (!input) return;
 
-      // 1. 완전 일치 단어 우선 검색 (예: PLB)
-      const exactMatch = Object.keys(breakerList).find(key => key.toUpperCase() === input);
+      // 1. 공백/특수문자 제외 완전 일치 검색
+      const exactMatch = Object.keys(breakerList).find(key => normalizeText(key) === input);
       if (exactMatch) {
         locateBreaker(exactMatch);
         return;
       }
 
-      // 2. 부분 일치 검색 (검색어가 포함된 단어 중 가장 짧은/정확도가 높은 키 선택)
-      const partialMatches = Object.keys(breakerList).filter(key => key.toUpperCase().includes(input));
+      // 2. 부분 일치 검색 (가장 일치도가 높은 짧은 키 선택)
+      const partialMatches = Object.keys(breakerList).filter(key => normalizeText(key).includes(input));
       if (partialMatches.length > 0) {
         partialMatches.sort((a, b) => a.length - b.length);
         locateBreaker(partialMatches[0]);
