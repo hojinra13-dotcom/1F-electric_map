@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>전기실 차단기 위치 검색</title>
+  
+  <!-- [PWA 설정 및 오프라인 지원 연결] -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#007bff">
+  <link rel="apple-touch-icon" href="electric_map.png">
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js')
+        .then(() => console.log('오프라인 실행 준비 완료!'))
+        .catch(err => console.error('서비스워커 등록 실패:', err));
+    }
+  </script>
+
+  <style>
+    body { font-family: 'Malgun Gothic', sans-serif; max-width: 900px; margin: 15px auto; padding: 0 10px; background: #f8f9fa; }
+    h2 { text-align: center; color: #1e293b; margin-bottom: 15px; }
+    
+    .search-wrapper { position: relative; flex: 1; }
+    .search-box { display: flex; gap: 8px; margin-bottom: 15px; }
+    .search-box input { width: 100%; padding: 12px; font-size: 16px; border: 2px solid #007bff; border-radius: 6px; outline: none; box-sizing: border-box; }
+    .search-box button { padding: 0 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; white-space: nowrap; }
+
+    .autocomplete-list {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      max-height: 250px;
+      overflow-y: auto;
+      z-index: 1000;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+      display: none;
+    }
+    .autocomplete-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 15px;
+    }
+    .autocomplete-item:last-child { border-bottom: none; }
+    .autocomplete-item:hover { background-color: #e0f2fe; color: #0369a1; font-weight: bold; }
+
+    .map-container {
+      position: relative;
+      display: inline-block;
+      width: 100%;
+      border: 2px solid #334155;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #e2e8f0;
+    }
+    .map-container img {
+      width: 100%;
+      height: auto;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .highlight-box {
+      position: absolute;
+      border: 3px solid #ef4444;
+      background-color: rgba(239, 68, 68, 0.35);
+      border-radius: 4px;
+      display: none;
+      transform: translate(-50%, -50%);
+      animation: blink 0.8s infinite alternate;
+      pointer-events: none;
+    }
+
+    @keyframes blink {
+      from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      to { opacity: 0.3; transform: translate(-50%, -50%) scale(1.25); }
+    }
+
+    .coord-info { margin-top: 12px; padding: 10px; background: #f1f5f9; border-radius: 6px; font-size: 13px; color: #475569; }
+  </style>
+</head>
+<body>
+
+  <h2>⚡ 차단기 및 설비 위치 검색</h2>
+
+  <div class="search-box">
+    <div class="search-wrapper">
+      <input type="text" id="searchInput" placeholder="차단기 번호 또는 설비명 입력 (예: VCB401, ACB101, 급수, 디젤발전기)" oninput="onTypeInput(this.value)" onkeypress="if(event.key==='Enter') search()">
+      <div id="suggestBox" class="autocomplete-list"></div>
+    </div>
+    <button onclick="search()">위치 검색</button>
+  </div>
+
+  <div class="map-container">
+    <img id="mapImg" src="electric_map.png" alt="도면 파일(electric_map.png)을 같은 폴더에 넣어주세요" onclick="getCoords(event)">
+    <div id="targetBox" class="highlight-box"></div>
+  </div>
+
+  <div class="coord-info">
+    <strong>📍 새 차단기 위치 좌표 잡기:</strong> 도면 위 차단기 자리를 터치/클릭하면 좌표가 나옵니다 
+    👉 <span id="clickResult" style="color:#d97706; font-weight:bold;">도면을 클릭하세요</span>
+  </div>
+
+  <script>
+    const breakerList = {
+      // 1. 기존 데이터 (콘덴서반 & VCB 400/500번대)
+      "콘덴서6": { left: 4.6, top: 23.9 }, "콘덴서5": { left: 8.5, top: 24.0 }, "콘덴서4": { left: 12.3, top: 24.0 },
+      "콘덴서3": { left: 16.0, top: 24.2 }, "콘덴서2": { left: 20.4, top: 24.2 }, "콘덴서1": { left: 24.3, top: 23.9 },
+      "VCB403": { left: 28.3, top: 20.9 }, "VCB402": { left: 32.3, top: 21.4 }, "VCB401": { left: 36.0, top: 21.2 },
+      "VCB405": { left: 40.3, top: 21.2 }, "급수P/P001": { left: 40.3, top: 21.2 }, "VCB407": { left: 44.4, top: 21.2 },
+      "지역순환P/P002": { left: 44.4, top: 21.2 }, "VCB409": { left: 48.4, top: 21.7 }, "FD FAN3": { left: 48.4, top: 21.7 },
+      "F.D. FAN3": { left: 48.4, top: 21.7 }, "VCB411": { left: 52.4, top: 21.7 }, "LCB TR A2": { left: 52.4, top: 21.7 },
+      "VCB413": { left: 56.3, top: 21.0 }, "VCB404": { left: 28.3, top: 28.1 }, "주FD FAN": { left: 28.3, top: 28.1 },
+      "주F.D. FAN": { left: 28.3, top: 28.1 }, "VCB406": { left: 40.3, top: 28.0 }, "축열조P/P004": { left: 40.3, top: 28.0 },
+      "VCB408": { left: 44.1, top: 28.0 }, "FD FAN1": { left: 44.1, top: 28.0 }, "F.D. FAN1": { left: 44.1, top: 28.0 },
+      "VCB410": { left: 48.5, top: 28.1 }, "LCA TR A1": { left: 48.5, top: 28.1 }, "VCB412": { left: 52.4, top: 28.1 },
+      "LCC TR A3": { left: 52.4, top: 28.1 }, "VCB414": { left: 56.1, top: 28.0 }, "VCB510": { left: 64.0, top: 21.4 },
+      "소각열 가압장": { left: 64.0, top: 21.4 }, "VCB508": { left: 68.1, top: 21.4 }, "LCB TR B2": { left: 68.1, top: 21.4 },
+      "VCB506": { left: 72.3, top: 21.5 }, "FD FAN2": { left: 72.3, top: 21.5 }, "F.D. FAN2": { left: 72.3, top: 21.5 },
+      "VCB504": { left: 76.6, top: 21.8 }, "지역순환P/P001": { left: 76.6, top: 21.8 }, "VCB503": { left: 80.5, top: 21.7 },
+      "급수P/P002": { left: 80.5, top: 21.7 }, "VCB501 PT PNL": { left: 84.5, top: 21.8 }, "VCB502 PT PNL": { left: 88.3, top: 21.8 },
+      "예비(FEED)": { left: 92.3, top: 21.7 }, "VCB511": { left: 64.5, top: 28.1 }, "VCB509": { left: 68.5, top: 27.8 },
+      "LCC TR B3": { left: 68.5, top: 27.8 }, "VCB507": { left: 72.4, top: 28.0 }, "LCA TR B1": { left: 72.4, top: 28.0 },
+      "VCB505": { left: 76.3, top: 28.0 }, "지역순환P/P3": { left: 76.3, top: 28.0 }, "VCB501": { left: 84.0, top: 27.8 },
+      "VCB502": { left: 87.9, top: 27.8 },
+
+      // 2. L/C A1 & ACB 100/200 & 22.9kV
+      "L/C TR. A1": { left: 15.3, top: 42.6 }, "LC TR A1": { left: 15.3, top: 42.6 }, "ACB101": { left: 22.3, top: 39.0 },
+      "ACB102": { left: 26.3, top: 39.0 }, "DH COOLER #1": { left: 26.3, top: 39.0 }, "DH COOLER 1": { left: 26.3, top: 39.0 },
+      "ACB104": { left: 30.3, top: 39.0 }, "ACB204": { left: 34.3, top: 38.9 }, "공통전원#1": { left: 34.3, top: 38.9 },
+      "공통전원1": { left: 34.3, top: 38.9 }, "ACB202": { left: 38.3, top: 39.5 }, "ACB201": { left: 42.3, top: 39.5 },
+      "ACB101 PT PNL": { left: 22.0, top: 46.0 }, "ACB103": { left: 26.1, top: 45.6 }, "주 보일러": { left: 26.1, top: 45.6 },
+      "주보일러": { left: 26.1, top: 45.6 }, "ACB105": { left: 30.0, top: 46.1 }, "ACB105 TIE-BRK": { left: 30.0, top: 46.1 },
+      "ACB205": { left: 34.3, top: 46.0 }, "DH COOLER #2": { left: 34.3, top: 46.0 }, "DH COOLER 2": { left: 34.3, top: 46.0 },
+      "ACB203": { left: 38.4, top: 46.0 }, "터빈-발전기": { left: 38.4, top: 46.0 }, "터빈발전기": { left: 38.4, top: 46.0 },
+      "ACB201 PT PNL": { left: 42.0, top: 46.0 }, "22.9KV PT PNL": { left: 64.7, top: 43.4 }, "22.9KV MOF PNL": { left: 71.1, top: 43.1 },
+      "V-201 ES-202": { left: 77.5, top: 42.8 }, "DS-201 ES-201": { left: 83.5, top: 42.8 },
+
+      // 3. L/C A2 & ACB 300/400 & ISS
+      "L/C TR. A2": { left: 14.9, top: 61.7 }, "LC TR A2": { left: 14.9, top: 61.7 }, "ACB301": { left: 22.7, top: 58.7 },
+      "ACB302": { left: 26.3, top: 58.3 }, "LTG TR. #1": { left: 26.3, top: 58.3 }, "LTG TR 1": { left: 26.3, top: 58.3 },
+      "ACB304": { left: 30.3, top: 58.6 }, "비상전원": { left: 30.3, top: 58.6 }, "ACB404": { left: 38.3, top: 58.6 },
+      "ACB402": { left: 42.3, top: 58.6 }, "ACB401": { left: 46.5, top: 58.9 }, "ACB301 PT PNL": { left: 22.3, top: 65.5 },
+      "ACB303": { left: 26.4, top: 65.2 }, "전기히터 (DH)": { left: 26.4, top: 65.2 }, "전기히터": { left: 26.4, top: 65.2 },"Electric Heater": { left: 26.4, top: 65.2 },
+      "ACB305": { left: 30.4, top: 65.5 }, "ACB306": { left: 34.4, top: 65.8 }, "ACB306 TIE-BRK": { left: 34.4, top: 65.8 },
+      "ACB405": { left: 38.0, top: 65.4 }, "LTG TR. #2": { left: 38.0, top: 65.4 }, "LTG TR 2": { left: 38.0, top: 65.4 },
+      "ACB403": { left: 42.3, top: 65.4 }, "PLB": { left: 42.3, top: 65.4 }, "ACB401 PT PNL": { left: 45.9, top: 65.5 },
+      "ESS. LTG TR. & DIST. PNL": { left: 64.5, top: 60.2 }, "ESS LTG TR": { left: 64.5, top: 60.2 }, "ISS-E1": { left: 71.6, top: 58.3 },
+
+      // 4. L/C A3 & ACB 500/600 & 비상디젤발전기
+      "L/C TR. A3": { left: 15.6, top: 77.8 }, "LC TR A3": { left: 15.6, top: 77.8 }, "ACB501": { left: 22.5, top: 74.8 },
+      "ACB502": { left: 26.3, top: 75.0 }, "HVAC": { left: 26.3, top: 75.0 }, "ACB504": { left: 30.5, top: 75.0 },
+      "물처리 계통": { left: 30.5, top: 75.0 }, "물처리계통": { left: 30.5, top: 75.0 }, "ACB604": { left: 34.6, top: 74.5 },
+      "전 냉각수계통": { left: 34.6, top: 74.5 }, "전냉각수계통": { left: 34.6, top: 74.5 }, "ACB602": { left: 38.5, top: 75.0 },
+      "소화 주 펌프": { left: 38.5, top: 75.0 }, "소화주펌프": { left: 38.5, top: 75.0 }, "ACB601": { left: 42.4, top: 74.7 },
+      "ACB501 PT PNL": { left: 22.4, top: 82.1 }, "ACB503": { left: 26.0, top: 81.6 }, "직원복지시설": { left: 26.0, top: 81.6 },
+      "ACB505": { left: 30.4, top: 81.6 }, "ACB505 TIE-BRK": { left: 30.4, top: 81.6 }, "ACB603": { left: 38.3, top: 81.8 },
+      "공통전원#2": { left: 38.3, top: 81.8 }, "공통전원2": { left: 38.3, top: 81.8 }, "ACB601 PT PNL": { left: 42.1, top: 81.6 },
+      "NOR. LTG TR. PNL #2": { left: 61.4, top: 77.8 }, "NOR. LTG DIST PNL #2": { left: 66.3, top: 78.4 },
+      "NOR. LTG DIST PNL #1": { left: 70.5, top: 77.8 }, "NOR. LTG TR. PNL #1": { left: 75.5, top: 78.1 },
+      "비상 디젤 발전기": { left: 91.4, top: 73.6 }, "비상디젤발전기": { left: 91.4, top: 73.6 }, "디젤발전기": { left: 91.4, top: 73.6 }
+    };
+
+    function onTypeInput(text) {
+      const suggestBox = document.getElementById('suggestBox');
+      const query = text.trim().toUpperCase();
+      if (!query) { suggestBox.style.display = 'none'; return; }
+      const matches = Object.keys(breakerList).filter(key => key.toUpperCase().includes(query));
+      if (matches.length > 0) {
+        const uniqueMatches = [...new Set(matches)].slice(0, 15);
+        suggestBox.innerHTML = uniqueMatches.map(key => `<div class="autocomplete-item" onclick="selectItem('${key}')">${key}</div>`).join('');
+        suggestBox.style.display = 'block';
+      } else { suggestBox.style.display = 'none'; }
+    }
+
+    function selectItem(name) {
+      document.getElementById('searchInput').value = name;
+      document.getElementById('suggestBox').style.display = 'none';
+      locateBreaker(name);
+    }
+
+    function search() {
+      const input = document.getElementById('searchInput').value.trim().toUpperCase();
+      document.getElementById('suggestBox').style.display = 'none';
+      if (!input) return;
+      if (breakerList[input]) { locateBreaker(input); return; }
+      const partialMatch = Object.keys(breakerList).find(key => key.toUpperCase().includes(input));
+      if (partialMatch) { locateBreaker(partialMatch); } 
+      else { alert('등록되지 않은 차단기 또는 설비명입니다.'); document.getElementById('targetBox').style.display = 'none'; }
+    }
+
+    function locateBreaker(name) {
+      const target = breakerList[name];
+      const box = document.getElementById('targetBox');
+      if (target) {
+        box.style.left = target.left + '%';
+        box.style.top = target.top + '%';
+        box.style.width = '45px';
+        box.style.height = '45px';
+        box.style.display = 'block';
+      }
+    }
+
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.search-wrapper')) { document.getElementById('suggestBox').style.display = 'none'; }
+    });
+
+    function getCoords(e) {
+      const img = document.getElementById('mapImg');
+      const rect = img.getBoundingClientRect();
+      const left = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
+      const top = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
+      document.getElementById('clickResult').innerText = `left: ${left}, top: ${top}`;
+      const box = document.getElementById('targetBox');
+      box.style.left = left + '%'; box.style.top = top + '%'; box.style.width = '45px'; box.style.height = '45px'; box.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
